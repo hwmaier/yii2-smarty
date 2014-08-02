@@ -181,7 +181,7 @@ class ViewRenderer extends BaseViewRenderer
                 if (($methodInfo[0] === '_widget_block') && (count($args) === 4))
                     return $this->widgetBlock($this->blocks[$tag], $args[0], $args[1], $args[2], $args[3]);
             } else {
-                throw new InvalidConfigException('Widget "' . $tag . '" not defined in view\'s configuration array.');
+                throw new InvalidConfigException('Widget "' . $tag . '" not declared.');
             }
         }
 
@@ -204,24 +204,28 @@ class ViewRenderer extends BaseViewRenderer
      */
     public function smarty_function_use($params, $template)
     {
+   error_log('called use');
         if (!isset($params['class'])) {
             trigger_error("use: missing 'class' parameter");
         }
+
         // Compiler plugin parameters may include quotes, so remove them
         foreach ($params as $key => $value)
             $params[$key] = trim($value, '\'""');
 
         $class = $params['class'];
-        $alias = ArrayHelper::getValue($params, 'as', null);
+        $alias = ArrayHelper::getValue($params, 'as', basename($params['class']));
         $type = ArrayHelper::getValue($params, 'type', 'block');
         if ($type === 'block') {
             $this->blocks[$alias] = $class;
             $this->smarty->registerPlugin('block', $alias, [$this, '_widget_block__' . $alias]);
-        }
-        if ($type === 'function') {
+        } elseif ($type === 'function') {
             $this->smarty->registerPlugin('function', $alias, [$this, '_widget_func__' . $alias]);
             $this->functions[$alias] = $class;
         }
+        // Note: We add a static end function returning void to the class to so we do not get a Smarty
+        // error when widget::end() is called which returns an object rather a string.
+        return "<?php class $alias extends $class { static function end() { parent::end(); } } ?>";
     }
 
     /**
