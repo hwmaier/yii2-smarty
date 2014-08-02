@@ -9,6 +9,7 @@ namespace yii\smarty;
 
 use Yii;
 use Smarty;
+use yii\web\View;
 use yii\base\Widget;
 use yii\base\ViewRenderer as BaseViewRenderer;
 use yii\base\InvalidConfigException;
@@ -53,10 +54,6 @@ class ViewRenderer extends BaseViewRenderer
      */
     public $mergeCompiledIncludes = false;
     /**
-     * @var boolean sets Smarty's escape_html configuration setting
-     */
-    public $escapeHtml = false;
-    /**
      * @var array Add additional directories to Smarty's search path for template file.
      *            This is useful when using the {import} function.
      */
@@ -90,7 +87,6 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->force_compile = $this->forceCompile;
         $this->smarty->debugging = $this->debugging;
         $this->smarty->merge_compiled_includes = $this->mergeCompiledIncludes;
-        $this->smarty->escape_html = $this->escapeHtml;
 
         // Set default template directories to current view's dir and application view dir
         $this->smarty->setTemplateDir([
@@ -111,6 +107,7 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->registerPlugin('block', 'title', [$this, 'smarty_block_title']);
         $this->smarty->registerPlugin('block', 'description', [$this, 'smarty_block_description']);
         $this->smarty->registerPlugin('block', 'registerJs', [$this, 'smarty_block_javascript']);
+        $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_function_use']);
 
         // Register block widgets specified in configuration array
         if (!empty($this->blocks)) {
@@ -192,6 +189,42 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
+     * Smarty compiler function plugin
+     * Usage is the following:
+     *
+     * {use class='yii\widgets\ActiveForm' as='ActiveForm' type='block'}
+     * {use class='@app\widgets\MyWidget' as='mywidget' type='function'}
+     *
+     * Supported attributes: class, as, type
+     *
+     * @param $params
+     * @param \Smarty_Internal_Template $template
+     * @return string
+     * @note Even though this method is public it should not be called directly.
+     */
+    public function smarty_function_use($params, $template)
+    {
+        if (!isset($params['class'])) {
+            trigger_error("use: missing 'class' parameter");
+        }
+        // Compiler plugin parameters may include quotes, so remove them
+        foreach ($params as $key => $value)
+            $params[$key] = trim($value, '\'""');
+
+        $class = $params['class'];
+        $alias = ArrayHelper::getValue($params, 'as', null);
+        $type = ArrayHelper::getValue($params, 'type', 'block');
+        if ($type === 'block') {
+            $this->blocks[$alias] = $class;
+            $this->smarty->registerPlugin('block', $alias, [$this, '_widget_block__' . $alias]);
+        }
+        if ($type === 'function') {
+            $this->smarty->registerPlugin('function', $alias, [$this, '_widget_func__' . $alias]);
+            $this->functions[$alias] = $class;
+        }
+    }
+
+    /**
      * Smarty plugin callback function to support widget as Smarty blocks.
      * This function is not called directly by Smarty but through a
      * magic __call wrapper.
@@ -211,13 +244,8 @@ class ViewRenderer extends BaseViewRenderer
         // Check if this is the opening ($content is null) or closing tag.
         if ($content === null) {
             $params['class'] = $class;
-            // Figure out where to put the result of the widget call if any
-            if (isset($params['assign'])) {
-                $assign = $params['assign'];
-                unset($params['assign']);
-            }
-            else
-                $assign = false;
+            // Figure out where to put the result of the widget call, if any
+            $assign = ArrayHelper::remove($params, 'assign', false);
             ob_start();
             ob_implicit_flush(false);
             $widget = Yii::createObject($params);
@@ -239,17 +267,14 @@ class ViewRenderer extends BaseViewRenderer
      *
      * Example usage is the following:
      *
-     * {Extractor file='@assets/html/features.html divClass='feature'}
+     * {GridView dataProvider=$provider}
      *
      */
     private function widgetFunction($class, $params, \Smarty_Internal_Template $template)
     {
-        $params['class'] = $class;
-        ob_start();
-        ob_implicit_flush(false);
-        $widget = Yii::createObject($params);
-        $out = $widget->run();
-        return ob_get_clean() . $out;
+        $repeat = false;
+        $this->widgetBlock($class, $params, null, $template, $repeat); // $widget->init(...)
+        return $this->widgetBlock($class, $params, '', $template, $repeat); // $widget->run()
     }
 
     /**
@@ -279,10 +304,13 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
-     * Smarty template function
+     * Smarty function plugin
      * Usage is the following:
      *
      * {meta keywords="Yii,PHP,Smarty,framework"}
+     *
+     * Supported attributes: any; all attributes are passed as
+     * parameter array to Yii's registerMetaTag function.
      *
      * @param $params
      * @param \Smarty_Internal_Template $template
@@ -297,10 +325,12 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
-     * Smarty template function
+     * Smarty block function plugin
      * Usage is the following:
      *
      * {title} Web Site Login {/title}
+     *
+     * Supported attributes: none.
      *
      * @param $params
      * @param $content
@@ -317,13 +347,15 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
-     * Smarty template function
+     * Smarty block function plugin
      * Usage is the following:
      *
      * {description}
      *     The text between the opening and closing tags is added as
      *     meta description tag to the page output.
      * {/description}
+     *
+     * Supported attributes: none.
      *
      * @param $params
      * @param $content
@@ -350,7 +382,6 @@ class ViewRenderer extends BaseViewRenderer
      *
      * @param string $string Constant identifier name
      * @param integer $default Default value
-     *
      * @return mixed
      */
     protected function getViewConstVal($string, $default)
@@ -360,10 +391,14 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
-     * Smarty template function
+     * Smarty function plugin
      * Usage is the following:
      *
-     * {registerJsFile url='http://maps.google.com/maps/api/js?sensor=false'}
+     * {registerJsFile url='http://maps.google.com/maps/api/js?sensor=false' position='POS_END'}
+     *
+     * Supported attributes: url, key, depends, position. Refer to Yii documentation for details.
+     * The position attribute is passed as text without the class prefix.
+     * Default is 'POS_END'.
      *
      * @param $params
      * @param \Smarty_Internal_Template $template
@@ -386,12 +421,16 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
-     * Smarty template function
+     * Smarty block function plugin
      * Usage is the following:
      *
-     * {registerJs key='map'}
-     *     $("#map").before('<h4>How to find us</h4>');
+     * {registerJs key='show' position='POS_LOAD'}
+     *     $("span.show").replaceWith('<div class="show">');
      * {/registerJs}
+     *
+     * Supported attributes: key, position. Refer to Yii documentation for details.
+     * The position attribute is passed as text without the class prefix.
+     * Default is 'POS_READY'.
      *
      * @param $params
      * @param $content
