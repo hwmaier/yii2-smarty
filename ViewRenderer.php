@@ -104,9 +104,11 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->registerPlugin('function', 'path', [$this, 'smarty_function_path']);
         $this->smarty->registerPlugin('function', 'meta', [$this, 'smarty_function_meta']);
         $this->smarty->registerPlugin('function', 'registerJsFile', [$this, 'smarty_function_javascript_file']);
+        $this->smarty->registerPlugin('function', 'registerCssFile', [$this, 'smarty_function_css_file']);
         $this->smarty->registerPlugin('block', 'title', [$this, 'smarty_block_title']);
         $this->smarty->registerPlugin('block', 'description', [$this, 'smarty_block_description']);
         $this->smarty->registerPlugin('block', 'registerJs', [$this, 'smarty_block_javascript']);
+        $this->smarty->registerPlugin('block', 'registerCss', [$this, 'smarty_block_css']);
         $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_function_use']);
         $this->smarty->registerPlugin('modifier', 'void', [$this, 'smarty_modifier_void']);
 
@@ -414,7 +416,8 @@ class ViewRenderer extends BaseViewRenderer
      *
      * {registerJsFile url='http://maps.google.com/maps/api/js?sensor=false' position='POS_END'}
      *
-     * Supported attributes: url, key, depends, position. Refer to Yii documentation for details.
+     * Supported attributes: url, key, depends, position and valid HTML attributes for the script tag.
+     * Refer to Yii documentation for details.
      * The position attribute is passed as text without the class prefix.
      * Default is 'POS_END'.
      *
@@ -466,6 +469,63 @@ class ViewRenderer extends BaseViewRenderer
             Yii::$app->getView()->registerJs($content,
                                              $this->getViewConstVal($position, View::POS_READY),
                                              $key);
+        }
+    }
+
+    /**
+     * Smarty function plugin
+     * Usage is the following:
+     *
+     * {registerCssFile url='@assets/css/normalizer.css'}
+     *
+     * Supported attributes: url, key, depends and valid HTML attributes for the link tag.
+     * Refer to Yii documentation for details.
+     *
+     * @param $params
+     * @param \Smarty_Internal_Template $template
+     * @return string
+     * @note Even though this method is public it should not be called directly.
+     */
+    public function smarty_function_css_file($params, $template)
+    {
+        if (!isset($params['url'])) {
+            trigger_error("registerCssFile: missing 'url' parameter");
+        }
+
+        $url = ArrayHelper::remove($params, 'url');
+        $key = ArrayHelper::remove($params, 'key', null);
+        $depends = ArrayHelper::remove($params, 'depends', null);
+
+        Yii::$app->getView()->registerCssFile($url, $depends, $params, $key);
+    }
+
+    /**
+     * Smarty block function plugin
+     * Usage is the following:
+     *
+     * {registerCss}
+     * div.header {
+     *     background-color: #3366bd;
+     *     color: white;
+     * }
+     * {/registerCss}
+     *
+     * Supported attributes: key and valid HTML attributes for the style tag.
+     * Refer to Yii documentation for details.
+     *
+     * @param $params
+     * @param $content
+     * @param \Smarty_Internal_Template $template
+     * @param $repeat
+     * @return string
+     * @note Even though this method is public it should not be called directly.
+     */
+    public function smarty_block_css($params, $content, $template, &$repeat)
+    {
+        if ($content !== null) {
+            $key = isset($params['key']) ? $params['key'] : null;
+
+            Yii::$app->getView()->registerCss($content, $params, $key);
         }
     }
 
