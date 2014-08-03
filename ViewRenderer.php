@@ -108,6 +108,8 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->registerPlugin('block', 'description', [$this, 'smarty_block_description']);
         $this->smarty->registerPlugin('block', 'registerJs', [$this, 'smarty_block_javascript']);
         $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_function_use']);
+        $this->smarty->registerPlugin('modifier', 'void', [$this, 'smarty_modifier_void']);
+
 
         // Register block widgets specified in configuration array
         if (!empty($this->blocks)) {
@@ -192,10 +194,13 @@ class ViewRenderer extends BaseViewRenderer
      * Smarty compiler function plugin
      * Usage is the following:
      *
-     * {use class='yii\widgets\ActiveForm' as='ActiveForm' type='block'}
-     * {use class='@app\widgets\MyWidget' as='mywidget' type='function'}
+     * {use class='yii\widgets\ActiveForm'}
+     * {use class='yii\grid\GridView' type='function'}
+     * {use class='@app\widgets\MyWidget' as='my_widget'}
+     * {use class="app\assets\AppAsset"}
+     * {use class="yii\helpers\Html"}
      *
-     * Supported attributes: class, as, type
+     * Supported attributes: class, as, type. Default type is 'block'.
      *
      * @param $params
      * @param \Smarty_Internal_Template $template
@@ -204,7 +209,6 @@ class ViewRenderer extends BaseViewRenderer
      */
     public function smarty_function_use($params, $template)
     {
-   error_log('called use');
         if (!isset($params['class'])) {
             trigger_error("use: missing 'class' parameter");
         }
@@ -223,9 +227,7 @@ class ViewRenderer extends BaseViewRenderer
             $this->smarty->registerPlugin('function', $alias, [$this, '_widget_func__' . $alias]);
             $this->functions[$alias] = $class;
         }
-        // Note: We add a static end function returning void to the class to so we do not get a Smarty
-        // error when widget::end() is called which returns an object rather a string.
-        return "<?php class $alias extends $class { static function end() { parent::end(); } } ?>";
+        return "<?php class $alias extends $class { } ?>";
     }
 
     /**
@@ -308,6 +310,18 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
+     * Smarty modifier plugin
+     * Converts any output to void
+     * @param mixed $arg
+     * @return string
+     * @note Even though this method is public it should not be called directly.
+     */
+    public function smarty_modifier_void($arg)
+    {
+        return; // Yes, we return nothing for the void modifier
+    }
+
+    /**
      * Smarty function plugin
      * Usage is the following:
      *
@@ -335,6 +349,8 @@ class ViewRenderer extends BaseViewRenderer
      * {title} Web Site Login {/title}
      *
      * Supported attributes: none.
+     * Also sets the $title template variable to
+     * make content accessible within the template.
      *
      * @param $params
      * @param $content
@@ -348,6 +364,7 @@ class ViewRenderer extends BaseViewRenderer
         if ($content !== null) {
             Yii::$app->getView()->title = $content;
         }
+        $template->assign('title', Yii::$app->getView()->title);
     }
 
     /**
@@ -360,6 +377,8 @@ class ViewRenderer extends BaseViewRenderer
      * {/description}
      *
      * Supported attributes: none.
+     * Also sets the $description template variable to
+     * make content accessible within the template.
      *
      * @param $params
      * @param $content
@@ -374,6 +393,7 @@ class ViewRenderer extends BaseViewRenderer
             // Clean-up whitespace and newlines
             $content = preg_replace('/\s+/', ' ', trim($content));
 
+            $template->assign('description', $content);
             Yii::$app->getView()->registerMetaTag(['name' => 'description',
                                                    'content' => $content],
                                                    'description');
@@ -470,6 +490,9 @@ class ViewRenderer extends BaseViewRenderer
     {
         /* @var $template \Smarty_Internal_Template */
         $template = $this->smarty->createTemplate($file, null, null, empty($params) ? null : $params, false);
+
+        // Make Yii params available as smarty config variables
+        $template->config_vars = Yii::$app->params;
 
         $template->assign('app', \Yii::$app);
         $template->assign('this', $view);
