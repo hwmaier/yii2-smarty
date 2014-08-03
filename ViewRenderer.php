@@ -349,8 +349,6 @@ class ViewRenderer extends BaseViewRenderer
      * {title} Web Site Login {/title}
      *
      * Supported attributes: none.
-     * Also sets the $title template variable to
-     * make content accessible within the template.
      *
      * @param $params
      * @param $content
@@ -364,7 +362,6 @@ class ViewRenderer extends BaseViewRenderer
         if ($content !== null) {
             Yii::$app->getView()->title = $content;
         }
-        $template->assign('title', Yii::$app->getView()->title);
     }
 
     /**
@@ -377,8 +374,6 @@ class ViewRenderer extends BaseViewRenderer
      * {/description}
      *
      * Supported attributes: none.
-     * Also sets the $description template variable to
-     * make content accessible within the template.
      *
      * @param $params
      * @param $content
@@ -393,7 +388,6 @@ class ViewRenderer extends BaseViewRenderer
             // Clean-up whitespace and newlines
             $content = preg_replace('/\s+/', ' ', trim($content));
 
-            $template->assign('description', $content);
             Yii::$app->getView()->registerMetaTag(['name' => 'description',
                                                    'content' => $content],
                                                    'description');
