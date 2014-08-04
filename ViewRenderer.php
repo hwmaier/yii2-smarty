@@ -59,13 +59,17 @@ class ViewRenderer extends BaseViewRenderer
      */
     public $templateDirs = [];
     /**
-     * @var array Declare Yii widgets to be available as Smarty block tags.
+     * @var array Add additional directories to Smarty's search path for plugins.
      */
-    public $blocks = [];
+    public $pluginDirs = [];
     /**
-     * @var array Declare Yii widgets to be available as Smarty function tags.
+     * @var array Class imports similar to the use tag
      */
-    public $functions = [];
+    public $imports = ['Html' => 'yii\helpers\Html'];
+    /**
+     * @var array Widget declarations
+     */
+    public $widgets = ['functions' => [], 'blocks' => []];
     /**
      * @var Smarty The Smarty object used for rendering
      */
@@ -100,8 +104,16 @@ class ViewRenderer extends BaseViewRenderer
         }
         $this->smarty->addTemplateDir($this->templateDirs);
 
+        // Add additional plugin dirs from configuration array, apply Yii's dir convention
+        foreach ($this->pluginDirs as &$dir) {
+            $dir = $this->resolveTemplateDir($dir);
+        }
+        dump($this->pluginDirs);
+        $this->smarty->addPluginsDir($this->pluginDirs);
+
         // Register plugins
         $this->smarty->registerPlugin('function', 'path', [$this, 'smarty_function_path']);
+        $this->smarty->registerPlugin('function', 'set', [$this, 'smarty_function_set']);
         $this->smarty->registerPlugin('function', 'meta', [$this, 'smarty_function_meta']);
         $this->smarty->registerPlugin('function', 'registerJsFile', [$this, 'smarty_function_javascript_file']);
         $this->smarty->registerPlugin('function', 'registerCssFile', [$this, 'smarty_function_css_file']);
@@ -112,17 +124,15 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_function_use']);
         $this->smarty->registerPlugin('modifier', 'void', [$this, 'smarty_modifier_void']);
 
-
         // Register block widgets specified in configuration array
-        if (!empty($this->blocks)) {
-            foreach($this->blocks as $tag => $class) {
+        if (isset($this->widgets['blocks'])) {
+            foreach(($this->widgets['blocks']) as $tag => $class) {
                 $this->smarty->registerPlugin('block', $tag, [$this, '_widget_block__' . $tag]);
             }
         }
-
         // Register function widgets specified in configuration array
-        if (!empty($this->functions)) {
-            foreach($this->functions as $tag => $class) {
+        if (isset($this->widgets['functions'])) {
+            foreach(($this->widgets['functions']) as $tag => $class) {
                 $this->smarty->registerPlugin('function', $tag, [$this, '_widget_func__' . $tag]);
             }
         }
@@ -178,12 +188,12 @@ class ViewRenderer extends BaseViewRenderer
         $methodInfo = explode('__', $method);
         if (count($methodInfo) === 2) {
             $tag = $methodInfo[1];
-            if (isset($this->functions[$tag])) {
+            if (isset($this->widgets['functions'][$tag])) {
                 if (($methodInfo[0] === '_widget_func') && (count($args) === 2))
-                    return $this->widgetFunction($this->functions[$tag], $args[0], $args[1]);
-            } elseif (isset($this->blocks[$tag])) {
+                    return $this->widgetFunction($this->widgets['functions'][$tag], $args[0], $args[1]);
+            } elseif (isset($this->widgets['blocks'][$tag])) {
                 if (($methodInfo[0] === '_widget_block') && (count($args) === 4))
-                    return $this->widgetBlock($this->blocks[$tag], $args[0], $args[1], $args[2], $args[3]);
+                    return $this->widgetBlock($this->widgets['blocks'][$tag], $args[0], $args[1], $args[2], $args[3]);
             } else {
                 throw new InvalidConfigException('Widget "' . $tag . '" not declared.');
             }
@@ -196,13 +206,10 @@ class ViewRenderer extends BaseViewRenderer
      * Smarty compiler function plugin
      * Usage is the following:
      *
-     * {use class='yii\widgets\ActiveForm'}
-     * {use class='yii\grid\GridView' type='function'}
-     * {use class='@app\widgets\MyWidget' as='my_widget'}
      * {use class="app\assets\AppAsset"}
      * {use class="yii\helpers\Html"}
      *
-     * Supported attributes: class, as, type. Default type is 'block'.
+     * Supported attributes: class, as.
      *
      * @param $params
      * @param \Smarty_Internal_Template $template
@@ -214,21 +221,12 @@ class ViewRenderer extends BaseViewRenderer
         if (!isset($params['class'])) {
             trigger_error("use: missing 'class' parameter");
         }
-
         // Compiler plugin parameters may include quotes, so remove them
         foreach ($params as $key => $value)
             $params[$key] = trim($value, '\'""');
 
         $class = $params['class'];
         $alias = ArrayHelper::getValue($params, 'as', basename($params['class']));
-        $type = ArrayHelper::getValue($params, 'type', 'block');
-        if ($type === 'block') {
-            $this->blocks[$alias] = $class;
-            $this->smarty->registerPlugin('block', $alias, [$this, '_widget_block__' . $alias]);
-        } elseif ($type === 'function') {
-            $this->smarty->registerPlugin('function', $alias, [$this, '_widget_func__' . $alias]);
-            $this->functions[$alias] = $class;
-        }
         return "<?php class $alias extends $class { } ?>";
     }
 
@@ -321,6 +319,35 @@ class ViewRenderer extends BaseViewRenderer
     public function smarty_modifier_void($arg)
     {
         return; // Yes, we return nothing for the void modifier
+    }
+
+    /**
+     * Smarty function plugin
+     * Usage is the following:
+     *
+     * {set title="My Page"}
+     * {set theme="frontend"}
+     * {set layout="main.tpl"}
+     *
+     * Supported attributes: title, theme, layout
+     *
+     * @param $params
+     * @param \Smarty_Internal_Template $template
+     * @return string
+     * @note Even though this method is public it should not be called directly.
+     */
+    public function smarty_function_set($params, $template)
+    {
+        if (isset($params['title']))
+            Yii::$app->getView()->title = ArrayHelper::remove($params, 'title');
+        if (isset($params['theme']))
+            Yii::$app->getView()->theme = ArrayHelper::remove($params, 'theme');
+        if (isset($params['layout']))
+            Yii::$app->controller->layout = ArrayHelper::remove($params, 'layout');
+
+        // We must have consumed all allowed parameters now, otherwise raise error
+        if (!empty($params))
+            trigger_error('set: Unsupported parameter attribute');
     }
 
     /**
@@ -503,7 +530,7 @@ class ViewRenderer extends BaseViewRenderer
      * Smarty block function plugin
      * Usage is the following:
      *
-     * {registerCss}
+     * {registerCssFile url='@assets/css/normalizer.css'}
      * div.header {
      *     background-color: #3366bd;
      *     color: white;
@@ -542,8 +569,16 @@ class ViewRenderer extends BaseViewRenderer
      */
     public function render($view, $file, $params)
     {
+        // Create use statements for imported classes
+        $content = 'string: ';
+        foreach($this->imports as $tag => $class) {
+            // Inject use tags into the template source for the configured imports
+            $content .= "{use class='$class' as='$tag'}\n";
+        }
+        $content .= file_get_contents($file);
+
         /* @var $template \Smarty_Internal_Template */
-        $template = $this->smarty->createTemplate($file, null, null, empty($params) ? null : $params, false);
+        $template = $this->smarty->createTemplate($content, null, null, empty($params) ? null : $params, false);
 
         // Make Yii params available as smarty config variables
         $template->config_vars = Yii::$app->params;
