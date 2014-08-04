@@ -65,7 +65,7 @@ class ViewRenderer extends BaseViewRenderer
     /**
      * @var array Class imports similar to the use tag
      */
-    public $imports = ['Html' => 'yii\helpers\Html'];
+    public $imports = [];
     /**
      * @var array Widget declarations
      */
@@ -124,16 +124,23 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_function_use']);
         $this->smarty->registerPlugin('modifier', 'void', [$this, 'smarty_modifier_void']);
 
+        if (isset($this->imports)) {
+            foreach(($this->imports) as $tag => $class) {
+                $this->smarty->registerClass($tag, $class);
+            }
+        }
         // Register block widgets specified in configuration array
         if (isset($this->widgets['blocks'])) {
             foreach(($this->widgets['blocks']) as $tag => $class) {
                 $this->smarty->registerPlugin('block', $tag, [$this, '_widget_block__' . $tag]);
+                $this->smarty->registerClass($tag, $class);
             }
         }
         // Register function widgets specified in configuration array
         if (isset($this->widgets['functions'])) {
             foreach(($this->widgets['functions']) as $tag => $class) {
                 $this->smarty->registerPlugin('function', $tag, [$this, '_widget_func__' . $tag]);
+                $this->smarty->registerClass($tag, $class);
             }
         }
     }
@@ -227,7 +234,8 @@ class ViewRenderer extends BaseViewRenderer
 
         $class = $params['class'];
         $alias = ArrayHelper::getValue($params, 'as', basename($params['class']));
-        return "<?php class $alias extends $class { } ?>";
+
+        $this->smarty->registerClass($alias, $class);
     }
 
     /**
@@ -569,16 +577,8 @@ class ViewRenderer extends BaseViewRenderer
      */
     public function render($view, $file, $params)
     {
-        // Create use statements for imported classes
-        $content = 'string: ';
-        foreach($this->imports as $tag => $class) {
-            // Inject use tags into the template source for the configured imports
-            $content .= "{use class='$class' as='$tag'}\n";
-        }
-        $content .= file_get_contents($file);
-
         /* @var $template \Smarty_Internal_Template */
-        $template = $this->smarty->createTemplate($content, null, null, empty($params) ? null : $params, false);
+        $template = $this->smarty->createTemplate($file, null, null, empty($params) ? null : $params, false);
 
         // Make Yii params available as smarty config variables
         $template->config_vars = Yii::$app->params;
