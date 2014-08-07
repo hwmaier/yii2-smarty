@@ -108,7 +108,6 @@ class ViewRenderer extends BaseViewRenderer
         foreach ($this->pluginDirs as &$dir) {
             $dir = $this->resolveTemplateDir($dir);
         }
-        dump($this->pluginDirs);
         $this->smarty->addPluginsDir($this->pluginDirs);
 
         // Register plugins
@@ -121,8 +120,9 @@ class ViewRenderer extends BaseViewRenderer
         $this->smarty->registerPlugin('block', 'description', [$this, 'smarty_block_description']);
         $this->smarty->registerPlugin('block', 'registerJs', [$this, 'smarty_block_javascript']);
         $this->smarty->registerPlugin('block', 'registerCss', [$this, 'smarty_block_css']);
-        $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_function_use']);
         $this->smarty->registerPlugin('modifier', 'void', [$this, 'smarty_modifier_void']);
+        $this->smarty->registerPlugin('compiler', 'use', [$this, 'smarty_compiler_use']);
+        $this->smarty->assignGlobal('_viewRenderer', $this); // compiler plugin needs a reference to this renderer
 
         if (isset($this->imports)) {
             foreach(($this->imports) as $tag => $class) {
@@ -210,35 +210,6 @@ class ViewRenderer extends BaseViewRenderer
     }
 
     /**
-     * Smarty compiler function plugin
-     * Usage is the following:
-     *
-     * {use class="app\assets\AppAsset"}
-     * {use class="yii\helpers\Html"}
-     *
-     * Supported attributes: class, as.
-     *
-     * @param $params
-     * @param \Smarty_Internal_Template $template
-     * @return string
-     * @note Even though this method is public it should not be called directly.
-     */
-    public function smarty_function_use($params, $template)
-    {
-        if (!isset($params['class'])) {
-            trigger_error("use: missing 'class' parameter");
-        }
-        // Compiler plugin parameters may include quotes, so remove them
-        foreach ($params as $key => $value)
-            $params[$key] = trim($value, '\'""');
-
-        $class = $params['class'];
-        $alias = ArrayHelper::getValue($params, 'as', basename($params['class']));
-
-        $this->smarty->registerClass($alias, $class);
-    }
-
-    /**
      * Smarty plugin callback function to support widget as Smarty blocks.
      * This function is not called directly by Smarty but through a
      * magic __call wrapper.
@@ -289,6 +260,68 @@ class ViewRenderer extends BaseViewRenderer
         $repeat = false;
         $this->widgetBlock($class, $params, null, $template, $repeat); // $widget->init(...)
         return $this->widgetBlock($class, $params, '', $template, $repeat); // $widget->run()
+    }
+
+    /**
+     * Smarty compiler function plugin
+     * Usage is the following:
+     *
+     * {use class="app\assets\AppAsset"}
+     * {use class="yii\helpers\Html"}
+     * {use class='yii\widgets\ActiveForm' type='block'}
+     * {use class='@app\widgets\MyWidget' as='my_widget' type='function'}
+     *
+     * Supported attributes: class, as, type. Type defaults to 'static'.
+     *
+     * @param $params
+     * @param \Smarty_Internal_Template $template
+     * @return string
+     * @note Even though this method is public it should not be called directly.
+     */
+    public function smarty_compiler_use($params, $template)
+    {
+        if (!isset($params['class'])) {
+            trigger_error("use: missing 'class' parameter");
+        }
+        // Compiler plugin parameters may include quotes, so remove them
+        foreach ($params as $key => $value)
+            $params[$key] = trim($value, '\'""');
+
+        $class = $params['class'];
+        $alias = ArrayHelper::getValue($params, 'as', basename($params['class']));
+        $type = ArrayHelper::getValue($params, 'type', 'static');
+
+        // Register the class during compile time
+        $this->smarty->registerClass($alias, $class);
+
+        if ($type === 'block') {
+            // Register widget tag during compile time
+            $this->widgets['blocks'][$alias] = $class;
+            $this->smarty->registerPlugin('block', $alias, [$this, '_widget_block__' . $alias]);
+            // Inject code to re-register widget tag during run-time
+            return "<?php
+                    \$_smarty_tpl->getGlobal('_viewRenderer')->widgets['blocks']['$alias'] = '$class';
+                    try {
+                        \$_smarty_tpl->registerPlugin('block', '$alias', [\$_smarty_tpl->getGlobal('_viewRenderer'), '_widget_block__$alias']);
+                    }
+                    catch (SmartyException \$e) {
+                        /* Ignore already registered exception during first execution after compilation */
+                    }
+                    ?>";
+        } elseif ($type === 'function') {
+            // Register widget tag during compile time
+            $this->widgets['functions'][$alias] = $class;
+            $this->smarty->registerPlugin('function', $alias, [$this, '_widget_function__' . $alias]);
+            // Inject code to re-register widget tag during run-time
+            return "<?php
+                    \$_smarty_tpl->getGlobal('_viewRenderer')->widgets['functions']['$alias'] = '$class';
+                    try {
+                        \$_smarty_tpl->registerPlugin('function', '$alias', [\$_smarty_tpl->getGlobal('_viewRenderer'), '_widget_function__$alias']);
+                    }
+                    catch (SmartyException \$e) {
+                        /* Ignore already registered exception during first execution after compilation */
+                    }
+                    ?>";        }
     }
 
     /**
